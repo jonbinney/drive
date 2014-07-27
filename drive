@@ -1,25 +1,50 @@
 #!/usr/bin/env python
-import sys
-import numpy
+import sys, time
+import numpy as np
 from matplotlib import pyplot as plt
 from scipy.misc import imread
 
+class Robot:
+    def __init__(self):
+        pass
+
+    def choose_velocity(self, obstacle_map, pose):
+        '''
+        Choose a velocity based on current state.
+
+        Args:
+            obstacle_map (Map) - Current map of obstacles
+            pose - current robot pose
+
+        Returns:
+            np.array(v_x, v_y, v_theta) - x iand y velocity in m/s, angular velocity in rad/s
+        '''
+        return np.array((0.1, 0.0, 0.0))
+
 class Visualization:
-    def __init__(self, static_map):
+    def __init__(self, world):
         '''
         Args:
             static_map (Map) - map of the world
         '''
-        self.static_map = static_map
+        self.world = world
         self.fig = fig = plt.figure()
         self.ax = fig.add_subplot(111)
 
+    def draw(self):
+        self.ax.cla()
+
         # Draw the map
-        m = self.static_map
+        m = self.world.static_map
         self.ax.imshow(m.arr, aspect='equal', extent=(0.0, m.x_max, 0.0, m.y_max), cmap=plt.cm.Greys_r)
 
-    def redraw(self):
-        pass
+        # Draw the robot
+        x, y, theta = world.robot_pose
+        dx = 0.2 * np.cos(theta)
+        dy = 0.2 * np.sin(theta)
+        self.ax.arrow(x, y, dx, dy, width=0.05, head_width=0.1, head_length=0.1)
+
+        plt.draw()
 
 class Map:
     def __init__(self, filename, scale=0.05):
@@ -53,9 +78,44 @@ class Map:
         row_i, col_i = pixel_coords
         return self.scale * col_i, self.y_max - self.scale * row_i
 
+class World:
+    def __init__(self, static_map, robot, robot_pose, dt=0.01):
+        '''
+        Args:
+            static_map (Map) - map of static obstacles
+            pose_robot (np.array) - initial pose of the robot (x, y, theta)
+            dt (float) - simulation time step in seconds
+        '''
+        self.static_map = static_map
+        self.robot = robot
+        self.robot_pose = robot_pose
+        self.dt = dt
+
+    def step(self):
+        '''
+        Run the simulation forward one step, moving the robot .
+        '''
+        # Ask the robot to choose a velocity
+        robot_vel = self.robot.choose_velocity(self.static_map, self.robot_pose)
+        self.robot_pose += self.dt * robot_vel
 
 if __name__ == '__main__':
+    robot_initial_pose = np.array((1.0, 1.0, 0.0))
+    dt = 1.0
+
     static_map = Map(sys.argv[1], scale=0.05)
-    vis = Visualization(static_map)
+    robot = Robot()
+    world = World(static_map, robot, robot_initial_pose, dt)
+    vis = Visualization(world)
+
+    plt.ion()
     plt.show()
+
+    step_i = 0
+    while True:
+        print step_i
+        vis.draw()
+        time.sleep(dt)
+        world.step()
+        step_i += 1
 

@@ -2,24 +2,41 @@
 import sys, time
 import numpy as np
 from matplotlib import pyplot as plt
+from scipy import linalg
 from scipy.misc import imread
 
 class Robot:
-    def __init__(self):
-        pass
+    def __init__(self, t_lookahead):
+        self.t_lookahead = t_lookahead
 
-    def choose_velocity(self, obstacle_map, pose):
+    def choose_velocity(self, obstacle_map, pose, time_to_goal_function):
         '''
         Choose a velocity based on current state.
 
         Args:
             obstacle_map (Map) - Current map of obstacles
             pose - current robot pose
+            f_dist_to_goal (function) - Function that takes a pose and returns the distance
+              from that pose to the goal, as estimated by the planner.
 
         Returns:
             np.array(v_x, v_y, v_theta) - x iand y velocity in m/s, angular velocity in rad/s
         '''
-        return np.array((0.1, 0.0, 0.0))
+        best_time_to_goal = np.inf
+        bset_v = np.array((0.0, 0.0, 0.0))
+        for v_x in [-1.0, 0.0, 1.0]:
+            for v_y in [-1.0, 0.0, 1.0]:
+                v = np.array((v_x, v_y, 0.0))
+                next_pose = pose + self.t_lookahead * v
+                if obstacle_map.in_collision(next_pose[:2]):
+                    continue
+
+                time_to_goal = time_to_goal_function(next_pose)
+                if time_to_goal < best_time_to_goal:
+                    best_time_to_goal = time_to_goal
+                    best_v = v
+
+        return best_v
 
 class Visualization:
     def __init__(self, world):
@@ -36,7 +53,7 @@ class Visualization:
 
         # Draw the map
         m = self.world.static_map
-        self.ax.imshow(m.arr, aspect='equal', extent=(0.0, m.x_max, 0.0, m.y_max), cmap=plt.cm.Greys_r)
+        self.ax.imshow(m.map_arr, aspect='equal', extent=(0.0, m.x_max, 0.0, m.y_max), cmap=plt.cm.Greys_r)
 
         # Draw the robot
         x, y, theta = world.robot_pose
@@ -54,10 +71,10 @@ class Map:
         Args:
             scale (float) - size of each pixel in meters
         '''
-        self.arr = imread(filename)
+        self.map_arr = imread(filename)
         self.scale = scale
-        self.x_max = self.arr.shape[1] * self.scale
-        self.y_max = self.arr.shape[0] * self.scale
+        self.x_max = self.map_arr.shape[1] * self.scale
+        self.y_max = self.map_arr.shape[0] * self.scale
 
     def map_to_pixel(self, map_coords):
         '''
@@ -78,8 +95,16 @@ class Map:
         row_i, col_i = pixel_coords
         return self.scale * col_i, self.y_max - self.scale * row_i
 
+    def in_collision(self, map_coords):
+        pixel_coords = self.map_to_pixel(map_coords)
+        try:
+            map_val = self.map_arr[pixel_coords]
+            return map_val == 0
+        except IndexError:
+            return True
+
 class World:
-    def __init__(self, static_map, robot, robot_pose, dt=0.01):
+    def __init__(self, static_map, robot, robot_pose, distance_function, dt=0.01):
         '''
         Args:
             static_map (Map) - map of static obstacles
@@ -89,23 +114,42 @@ class World:
         self.static_map = static_map
         self.robot = robot
         self.robot_pose = robot_pose
+        self.distance_function = distance_function
         self.dt = dt
 
     def step(self):
         '''
-        Run the simulation forward one step, moving the robot .
+        Run the simulation forward one step, moving the robot
         '''
         # Ask the robot to choose a velocity
-        robot_vel = self.robot.choose_velocity(self.static_map, self.robot_pose)
-        self.robot_pose += self.dt * robot_vel
+        robot_vel = self.robot.choose_velocity(self.static_map, self.robot_pose, self.distance_function)
+        next_robot_pose = self.robot_pose + self.dt * robot_vel
+        if self.static_map.in_collision(next_robot_pose[:2]):
+            print 'Robot hit something!'
+        else:
+            self.robot_pose = next_robot_pose
+
+class EuclideanDistance:
+    def __init__(self, goal_pose):
+        self.goal_pose = goal_pose
+
+    def distance(self, pose):
+        # Use euclidean distance on translationol component.
+        return linalg.norm(goal_pose[:2] - pose[:2])
 
 if __name__ == '__main__':
     robot_initial_pose = np.array((1.0, 1.0, 0.0))
-    dt = 1.0
+    dt = 0.1
+
+    # How much faster the sim runs compared to real time
+    sim_factor = 4.0
+
+    goal_pose = np.array((4.0, 4.0, 0.0))
+    dist_class = EuclideanDistance(goal_pose)
 
     static_map = Map(sys.argv[1], scale=0.05)
-    robot = Robot()
-    world = World(static_map, robot, robot_initial_pose, dt)
+    robot = Robot(t_lookahead=dt)
+    world = World(static_map, robot, robot_initial_pose, dist_class.distance, dt)
     vis = Visualization(world)
 
     plt.ion()
@@ -113,9 +157,9 @@ if __name__ == '__main__':
 
     step_i = 0
     while True:
-        print step_i
+        print step_i, ':', world.robot_pose
         vis.draw()
-        time.sleep(dt)
+        time.sleep(dt / sim_factor)
         world.step()
         step_i += 1
 
